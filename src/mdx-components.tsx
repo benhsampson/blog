@@ -8,9 +8,7 @@ import type { MDXComponents } from "mdx/types";
 // This file is required to use MDX in `app` directory.
 export function useMDXComponents(components: MDXComponents): MDXComponents {
   return {
-    h1: (props) => <h1 className="text-xl" {...props} />,
-    a: (props) => <a className="text-blue-500" {...props} />,
-    p: (props) => <p className="mb-2.5" {...props} />,
+    a: (props) => <a className="text-blue-700 no-underline" {...props} />,
     ...components,
   };
 }

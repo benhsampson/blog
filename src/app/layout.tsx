@@ -1,12 +1,17 @@
 import Link from "next/link";
+import { Nanum_Gothic_Coding } from "next/font/google";
 import "./globals.css";
-import { Lora } from "next/font/google";
+import "@code-hike/mdx/dist/index.css";
 
-const inter = Lora({ subsets: ["latin"] });
+const inter = Nanum_Gothic_Coding({
+  subsets: ["latin"],
+  adjustFontFallback: true,
+  weight: ["400", "700"],
+});
 
 export const metadata = {
-  title: "ML Blog",
-  description: "Random musings of a wannabe ML engineer",
+  title: "Ben Sampson blog",
+  description: "Ramblings of a wannabe ML engineer",
 };
 
 export default function RootLayout({
@@ -18,13 +23,15 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <div className="container w-full mx-auto flex flex-col">
-          <header className="py-4">
+          <header className="py-8 flex flex-col items-start">
             <Link href="/">
-              <h1 className="text-xl">{metadata.title}</h1>
+              <h1 className="text-xl font-medium">{metadata.title}</h1>
             </Link>
             <p className="text-base">{metadata.description}</p>
           </header>
-          <div className="max-w-5xl w-full self-center">{children}</div>
+          <div className="max-w-3xl w-full self-center prose pb-16">
+            {children}
+          </div>
         </div>
       </body>
     </html>

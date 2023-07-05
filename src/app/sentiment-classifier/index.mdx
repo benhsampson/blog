@@ -1,0 +1,185 @@
+# Sentiment Classifier
+
+Sentiment analysis aims to identify the polarity of a given text.
+We're going to use Natural Language Processing (NLP) to build a system that can identify emotions (e.g. anger, sadness, joy) from text alone.
+We'll use the HuggingFace (🤗) ecosystem: 🤗 Datasets, 🤗 Tokenizers, and 🤗 Transformers.
+
+We'll tackle this problem using a variant of BERT.
+It's called [DistilBERT](https://huggingface.co/docs/transformers/model_doc/distilbert), and is comparably performant (retains 97% language understanding capabilities), smaller (40% reduced) and more efficient (60% faster).[^1]
+
+[^1]: [DistilBERT, a distilled version of BERT: smaller, faster, cheaper and lighter](https://arxiv.org/abs/1910.01108)
+
+## Dataset
+
+What better place to get emotionally loaded text than Twitter?
+We'll use the the [`emotions`](https://huggingface.co/datasets/dair-ai/emotion) dataset that contains six basic emotions: anger, disgust, fear, joy, sadness, and surprise.
+Given a tweet, our task will be to train a model that can classify it into one of these emotions.
+
+Our Dataset is actually a [`DatasetDict`](https://huggingface.co/docs/datasets/package_reference/main_classes#datasets.DatasetDict) which is split into three [`Dataset`](https://huggingface.co/docs/datasets/package_reference/main_classes#datasets.Dataset)s: `train` (80%), `validation` (10%) and `test` (10%).
+It's best to use the `validation` split to tune hyperparameters and `test` to run evals on the final model.[^2]
+
+[^2]: [🤗 Considerations for model evaluation](https://huggingface.co/docs/evaluate/considerations#properly-splitting-your-data)
+
+```python
+from datasets import load_dataset
+emotions = load_dataset('emotion')
+emotions
+```
+
+```python
+DatasetDict({
+    train: Dataset({
+        features: ['text', 'label'],
+        num_rows: 16000
+    })
+    validation: Dataset({
+        features: ['text', 'label'],
+        num_rows: 2000
+    })
+    test: Dataset({
+        features: ['text', 'label'],
+        num_rows: 2000
+    })
+})
+```
+
+Let's preview some items:
+
+```python
+emotions.set_format(type='pandas')
+df = emotions['train'][:]
+
+def label_int2str(row):
+  return emotions['train'].features['label'].int2str(row)
+
+df['label_name'] = df['label'].apply(label_int2str)
+df.head()
+```
+
+|     | text                                                                                                         | label | label_name |
+| --: | :----------------------------------------------------------------------------------------------------------- | ----: | :--------- |
+|   0 | i didnt feel humiliated                                                                                      |     0 | sadness    |
+|   1 | i can go from feeling so hopeless to so damned hopeful just from being around someone who cares and is awake |     0 | sadness    |
+|   2 | im grabbing a minute to post i feel greedy wrong                                                             |     3 | anger      |
+|   3 | i am ever feeling nostalgic about the fireplace i will know that it is still on the property                 |     2 | love       |
+|   4 | i am feeling grouchy                                                                                         |     3 | anger      |
+
+Note that `[:]` internally calls [`__getitem__`](https://huggingface.co/docs/datasets/v2.13.1/en/package_reference/main_classes#datasets.Dataset.__getitem__) on the dataset, yielding rows indexed by the slice `:` i.e. all the rows.
+Since we set the format to `pandas`, _`emotions['train'][:]`_ returns a `DataFrame`.
+
+_`emotions['train'].features['label']`_ returns a [_`ClassLabel(num_classes=6, names=['sadness', 'joy', 'love', 'anger', 'fear', 'surprise'])`_](https://huggingface.co/docs/datasets/v2.13.1/en/package_reference/main_classes#datasets.ClassLabel) that contains the [`int2str`](https://huggingface.co/docs/datasets/v2.13.1/en/package_reference/main_classes#datasets.ClassLabel.int2str) method, which we [`apply`](https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.apply.html) on every row to `label_name`.
+
+Note that while _`emotions['train'].features['label']`_ returns a `ClassLabel`, _`emotions['train']['text']`_ returns a [_`Value(dtype='string')`_](https://huggingface.co/docs/datasets/v2.13.1/en/package_reference/main_classes#datasets.Value).
+
+### Class Distribution
+
+It's always a good idea to examine the distribution of examples across classes.
+A dataset with a skewed class distribution might require a different treatment in terms of training loss and eval metrics than a balanced one.
+
+```python
+import matplotlib.pyplot as plt
+
+df['label_name'].value_counts().plot().barh()
+plt.title('Frequency of classes')
+plt.show()
+```
+
+![Class Distribution](sentiment_classifier/class_dist.png)
+
+We can see that the dataset is heavily imbalanced.
+We won't do any random over/under-sampling for now, but make sure to ask Alexa to remind us to revisit this when we want to improve our model later.
+
+### Text Length Distribution
+
+DistilBERT has a maximum context size of 512 tokens.
+To get a rough idea of whether we can use our dataset as-is under this limitation, let's make the (bad) assumption that the number of words gives a decent indication of the number of tokens in each tweet.
+
+```python
+df['words_per_tweet'] = df['text'].str.split().apply(len)
+df.boxplot('words_per_tweet', by='label_name', grid=False, showfliers=False, color='black')
+df.suptitle('')
+df.xlabel('')
+plt.show()
+```
+
+![Text Length Distribution](sentiment_classifier/text_len_dist.png)
+
+Most Tweets are under 50 words, well below DistilBERT's maximum context size.
+That's good news! No truncation necessary.
+
+Also, it looks like there isn't any worrisome relationship between the number of words and the class.
+This is also good news! We won't have to worry about the model learning to classify based on the length of the tweet.
+
+## Tokenization
+
+When using pretrained models, we need to use the same tokenization scheme that was used to train our model.
+Otherwise, some tokens in our dataset might not be in our model's vocabulary.
+
+WordPiece is the tokenization scheme used by BERT and DistilBERT.
+However, we we don't actually have to know this, since the [`AutoTokenizer`](https://huggingface.co/transformers/model_doc/auto.html#autotokenizer) class will automatically select the right tokenizer for us.
+
+```python
+from transformers import AutoTokenizer
+
+model_ckpt = "distilbert-base-uncased"
+tokenizer = AutoTokenizer.from_pretrained(model_ckpt)
+```
+
+Let's try it out:
+
+```python
+text = "Tokenizing text is a core task of NLP."
+encoded_text = tokenizer(text)
+encoded_text
+```
+
+```python
+{'input_ids': [101, 19204, 6026, 3793, 2003, 1037, 4563, 4708, 1997, 17953, 2361, 1012, 102],
+ 'attention_mask': [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]}
+```
+
+Each one of the 13 tokens in the input text is mapped to an `input_id` and an `attention_mask` value.
+Converting them into tokens:
+
+```python
+tokens = tokenizer.convert_ids_to_tokens(encoded_text.input_ids)
+tokens
+```
+
+```python
+['[CLS]', 'token', '##izing', 'text', 'is', 'a', 'core', 'task', 'of', 'nl', '##p', '.', '[SEP]']
+```
+
+Note:
+
+- The text is lowercased,
+- uncommon words (`tokenizing`, `nlp`) are split into subwords (`token`-`##izing`, `nl`-`##p`),
+- `[CLS]` and `[SEP]` indicate the start and end of the sequence, and
+- `##` prefix indicates that the token is a continuation of the previous token.
+
+This is all the information we need to reconstruct the original text:
+
+```python
+tokenizer.convert_tokens_to_string(tokens)
+```
+
+```python
+'[CLS] tokenizing text is a core task of nlp. [SEP]'
+```
+
+### Tokenizing the whole dataset
+
+```python
+def tokenize(batch):
+    return tokenizer(batch['text'], padding=True, truncation=True)
+
+emotions_encoded = emotions.map(tokenize, batched=True, batch_size=None)
+emotions_encoded['train'].column_names
+```
+
+```python
+['text', 'label', 'input_ids', 'attention_mask']
+```
+
+_`padding=True`_ pads input sequences to the maximum sequence length in the batch; that's why we need the attention mask is used to ignore padded areas of the input tensors.
+_`batched=True`_ encodes the examples in batches of size `batch_size=None`, so `tokenize()` will be called on the full dataset as a single batch.

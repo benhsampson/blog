@@ -1,0 +1,93 @@
+# Byte Pair Encoding in Rust
+
+Let's start with the _why_.
+BPE is a _subword tokenization_ algorithm.
+Tokenization is the process of splitting sentences into smaller chunks, called _tokens_, of a form that computers can easily work with.
+Imagine we wanted to train a fancy [recurrent neural net](http://karpathy.github.io/2015/05/21/rnn-effectiveness/) (RNN) on a large text.
+So our input is not limited by some arbitrary fixed length, the RNN accepts a _sequence_ of tokens as input.
+
+So, as an initial guess, we decide that each word should be it's own token (word tokenization).
+However, this approach quickly falls short once we realize just how large the space of possible words is.
+Suppose our dataset contains $10^6$ unique words.
+If the job of our neural net's 1st layer is to compress the $10^6$-dimensional input vectors to $10^3$-dimensional vectors, the weight matrix of the 1st layer would contain $10^6 \times 10^3 = 10^9$ weights.
+Our net's vocabulary has completely blown up in size and complexity.
+So we to have our tokens be characters instead (character tokenization).
+There are far fewer chars then there are words, so our parameter count is low!
+However, the (huge) drawback is that the net has to learn structures such as words on its own.
+This is wasteful of computation; computation that could be spent learning what the words actually mean.
+So, we arrive somewhere in-between, subword tokenization. The benefits are:
+
+- Subwords should carry _semantic meaning_ that is close to words, and richer than individual characters.
+- Our vocabulary size is limited, driving memory efficiency and _representation sharing_.
+
+Subword tokenization splits rare words into subword components.
+Ideally, these subword representations are semantically or _syntactically_ meaningful.
+E.g.: splitting prefixes from words, `unexpected` may become `un ##expected`.
+The resulting vocabulary size can be an orders of magnitude smaller (10-100x) than for word tokenization while keeping frequent words (e.g. `the`, `he`, `in`) single entries.
+
+## The BPE tokenizer
+
+**BPE merges adjacent byte pairs based on their frequency in the training corpus**.
+
+Let's start with the **training phase** where the objective is to generate (a) a dictionary of word frequencies, then (b) a dictionary of symbol frequencies.
+For (b), we initialize it to a dictionary containing all subsequent pairs of characters and their counts.
+The most frequent symbol pair is merged to create a new symbol in the dictionary, with an updated count.
+This process is repeated until a target vocabulary size is reached.
+
+```
+fn update frequencies(vocab)
+    frequencies = init frequencies()
+    for word, freq in vocab
+        symbols = split whitespace(word)
+        for i in 0..len(symbols)-1
+            frequencies[(symbols[i], symbols[i+1])] += freq
+    return frequencies
+
+fn merge vocab(vocab in, pair)
+    vocab out = init vocab()
+    pattern = join(pair)
+    for (word in,) in vocab in
+        word out = replace(word in, "pair[0] pair[1]", "pair[0]pair[1]")
+        vocab out[word out] = vocab in[word in]
+    return vocab out
+
+fn train(corpus)
+    vocab = count words(corpus)
+    for i in 0..N merges
+        frequencies = update frequencies(vocab)
+        most common pair = most common(frequencies)
+        vocab = merge vocab(vocab, most common pair)
+    return frequencies
+```
+
+Next, let's move onto the prediction phase i.e. we need to tokenize an input sequence.
+
+```
+fn find best pair(symbols, frequencies)
+    // symbols is an iterator of sequences of chars
+    // frequencies is is a map of symbol pairs to a score/frequency in the training corpus
+    best pair = null
+    best score = 0
+    for i in 0..len(symbols)-1
+        score = frequencies[(symbols[i], symbols[i+1])]
+        if score > best score
+            best pair = (symbols[i], symbols[i+1])
+            best score = score
+    return (best pair, best score)
+
+fn merge pair(symbols, pair)
+    for i in 0..len(symbols)-1
+        if (symbols[i], symbols[i+1]) == pair
+            merge(symbols[i], symbols[i+1])
+    return symbols
+
+fn tokenize(text, frequencies)
+    symbols = init symbols(text) // pre-populate symbols with individual characters
+    loop
+        (best pair, best score) = find best pair(symbols, frequencies)
+        if best score is null
+            // there is not a single pair of symbols present in the training corpus
+            break // stop once symbols can no longer be merged
+        symbols = merge best pair(symbols, best pair)
+    return symbols
+```

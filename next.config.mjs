@@ -1,6 +1,8 @@
 import remarkRehype from "remark-rehype";
+import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkParse from "remark-parse";
+import { remarkCodeHike } from "@code-hike/mdx";
 import rehypeKatex from "rehype-katex";
 import remarkStringify from "rehype-stringify";
 import mdx from "@next/mdx";
@@ -12,7 +14,13 @@ const nextConfig = {
 
 const withMdx = mdx({
   options: {
-    remarkPlugins: [remarkParse, remarkMath, remarkRehype],
+    remarkPlugins: [
+      remarkParse,
+      remarkGfm,
+      [remarkCodeHike, { theme: "dark-plus" }],
+      remarkMath,
+      remarkRehype,
+    ],
     rehypePlugins: [rehypeKatex, remarkStringify],
   },
 });
