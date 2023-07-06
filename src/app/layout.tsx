@@ -11,7 +11,7 @@ const inter = Nanum_Gothic_Coding({
 
 export const metadata = {
   title: "Ben Sampson blog",
-  description: "Ramblings of a wannabe ML engineer",
+  description: "Ramblings of a software engineer",
 };
 
 export default function RootLayout({
@@ -29,9 +29,7 @@ export default function RootLayout({
             </Link>
             <p className="text-base">{metadata.description}</p>
           </header>
-          <div className="max-w-3xl w-full self-center prose pb-16">
-            {children}
-          </div>
+          {children}
         </div>
       </body>
     </html>

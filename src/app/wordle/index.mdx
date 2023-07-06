@@ -1,0 +1,167 @@
+# Creating a Wordle Solver in Rust
+
+Before diving into the implementation, please give 3Blue1Brown's excellent video, [Solving Wordle using information theory](https://www.youtube.com/watch?v=v68zYyaEmEA) a watch.
+But I have some notes from the video and from perusing the [Wikipedia article on Information theory](https://en.wikipedia.org/wiki/Information_theory).
+
+TODO: Source code
+
+## Wordle
+
+Before creating the solver, we need to make the game; don't worry, this'll be quick.
+
+We'll start with a `Wordle` struct that's initialized with a dictionary.
+The `play()` method should, for a given answer, compute the number of times it has to call `guess()` on a type `G` that implements the trait `Guesser`.
+We allow more than 6 guesses to avoid cutting off the tail end of the guess distribution.
+We have `Guesser` be its own trait rather than coupling this functionality with `Wordle` so that different guessing algorithms can be easily swapped in and out.
+
+```rs
+struct Wordle {
+    dictionary: HashSet<&'static str>,
+}
+
+const MAX_GUESSES: usize = 32;
+
+impl Wordle {
+    pub fn new() -> Self {
+        Self {
+            dictionary: // ...
+        }
+    }
+
+    // Returns # of guesses the Solver took
+    pub fn play<G: Guesser>(&self, answer: &str, guesser: &mut G) -> Option<usize> {
+        let mut history = Vec::new();
+        for i in 1..=MAX_GUESSES {
+            let word = guesser.guess(&history);
+            if word == answer {
+                return Some(i);
+            }
+            let mask = Correctness::compute(answer, &word);
+            history.push(Guess { word, mask });
+        }
+        None
+    }
+}
+
+pub trait Guesser {
+    fn guess(&mut self, history: &[Guess]) -> String;
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Correctness {
+    Correct,
+    Misplaced,
+    Wrong,
+}
+
+impl Correctness {
+    fn compute(answer: &str, guess: &str) -> [Self; 5] {
+        todo!()
+    }
+}
+```
+
+Before we write our first `Guesser`, we should start with `Correctness::compute`.
+`Correctness::compute` takes in an answer and a word and returns the corresponding pattern of type `[Correctness; 5]`.
+
+```rs
+impl Correctness {
+    fn compute(answer: &str, guess: &str) -> [Self; 5] {
+        assert_eq!(answer.len(), 5);
+        assert_eq!(guess.len(), 5);
+        // Initialize by painting all gray
+        let mut mask = mask![W W W W W];
+        // Paint greens
+        for ((i, g), a) in guess.char_indices().zip(answer.chars()) {
+            if g == a {
+                mask[i] = Correctness::Correct;
+            }
+        }
+        let mut used = [false; 5];
+        // Pre-populate `used` with greens
+        for (i, c) in mask.iter().enumerate() {
+            if *c == Correctness::Correct {
+                used[i] = true;
+            }
+        }
+        // Paint yellows
+        for (ai, a) in answer.char_indices() {
+            // Ignore if already painted green
+            if mask[ai] == Correctness::Correct {
+                continue;
+            }
+            for (gi, g) in guess.char_indices() {
+                // Look for answer char in guess chars and not used
+                // i.e. not already painted green and not already "used up"
+                if g == a && !used[gi] {
+                    used[gi] = true;
+                    mask[gi] = Correctness::Misplaced;
+                    break;
+                }
+            }
+        }
+        mask
+    }
+}
+```
+
+Note that we've created a macro `mask!` that saves us the hassle of writing full `Correctness::Correct` by just writing `C` instead , `W` for `Correctness::Wrong` and `M` for `Correctness::Misplaced`.
+
+## Naive Solver
+
+### Information Theory basics
+
+A key measure of information is _entropy_. It measures the _amount of uncertainty_ involved in the value of a _random variable_.
+To make this more concrete: consider the possible outcomes of a coin flip vs a roll of a die.
+A coin flip has two possible, equally likely outcomes, heads or tails.
+A die roll has six possible, equally likely outcomes, 1 to 6.
+Thus, there is more uncertainty associated with the die roll than the coin flip.
+Consequently, there is more information/entropy associated with the die roll than the coin flip.
+**But how much more?**
+
+A standard unit of information is the bit.
+If we have an observation that cuts the _space of possibilities_ in half i.e. a probability of $1/2$, the observation has 1 bit of information.
+If the observation cuts it into a quarter i.e. a probability of $1/4$, it has 2 bits of information.
+Into a eighth ($1/8$), 3 bits; and so on.
+
+Let $p$ be the probability of some random event, $I$ be the number of bits of information associated with the outcome of that event occurring.
+
+$$
+p=1/2^I
+=2^{-I}
+\implies
+I=-\log_2{p}
+$$
+
+This is more convenient e.g. it's just easier to say that an event has 20 bits of information, than it is to say that it has a probability of $9.53674316\times10^{-7}$.
+The usefulness of bits lie in how they can be added together.
+If you're 1st observation provides $x$ bits of information, and your 2nd observation provides $y$ bits of information, then those two observations together provide $x+y$ bits of information.
+
+### Applying this to Wordle
+
+We can think of a _pattern_ as a sequence of green, yellow, of gray squares signifying correct, misplaced, or incorrect letters respectively e.g. [🟩⬜🟨⬜⬜] or [🟨⬜🟩⬜🟩].
+
+We'll create a dictionary of 5-letter words from the [Google Books 1-grams dataset](http://storage.googleapis.com/books/ngrams/books/20200217/eng/eng-1-ngrams_exports.html).
+We'll assume that all the words have an equal probability of being the answer.
+In reality, Wordle has an hand-picked answer list; but in the spirit of fairness, we won't use this information.
+
+So, given an guess $g$, the probability $p$ of a pattern occurring is simply $$p=\frac{N_p}{N}$$ where $N$ is the total number of words in the dataset and $$N_p \le N$$ is the number of words that _could_ be the answer.
+This confirms what we'd think intuitively, the most common patterns will contain the least amount of information.
+
+E.g. Given the guess "apple", the pattern [🟩🟨⬜⬜🟩] is valid for the possible answer "alone" ('a' in 1st position and 'e' in 5th are correct, 'l' is misplaced in 2nd when it should be in 4th, and 'o' and 'n' are incorrect).
+But this pattern would not be valid for the word "abide" (pattern says 'b' is misplaced in 2nd position when it is actually incorrect), so "abide" is not a possible answer.
+
+To evaluate how "good" a guess $g$ is i.e. the average amount of information a guess would give, let's take the _expected value_ $$E_g$$ of its information over all of the possible patterns:
+
+$$
+E_g=\sum_{i}p_i \log_2{1/p_i}
+$$
+
+Reciprocals are harder to compute than negations so we'd instead use:
+
+$$
+E_g=-\sum_{i}p_i \log_2{p_i}
+$$
+
+So, in order to calculate the best 1st guess, we'll apply this formula for each possible 5-letter guess, and pick the highest.
+Note that for proceeding guesses, we only select amongst the remaining possible words, which shrinks with each guess.

@@ -17,3 +17,14 @@ code::before,
 code::after {
   display: none;
 }
+
+.ch-codeblock {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  border-radius: 0 !important;
+}
+
+.ch-section-link,
+.ch-section-link * {
+  text-decoration: none !important;
+}

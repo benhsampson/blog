@@ -17,7 +17,7 @@ const withMdx = mdx({
     remarkPlugins: [
       remarkParse,
       remarkGfm,
-      [remarkCodeHike, { theme: "dark-plus" }],
+      [remarkCodeHike, { theme: "dark-plus", lineNumbers: true }],
       remarkMath,
       remarkRehype,
     ],
